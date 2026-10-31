@@ -1,0 +1,282 @@
+---
+description: Generate PRD and Design Docs from existing codebase through discovery, generation, verification, and review workflow
+---
+
+**Explicit User Instruction**: The user explicitly instructs and authorizes every subagent call named in this recipe. Execute each applicable call when its prerequisites are met.
+
+Execute the `llm-friendly-context` skill (using Skill tool) before writing Agent prompts, handoffs, or generated artifacts.
+
+**Command Context**: Reverse engineering workflow to create documentation from existing code
+
+Target: $ARGUMENTS
+
+## Orchestrator Definition
+
+**Core Identity**: "I am not a worker. I am an orchestrator." (see subagents-orchestration-guide skill)
+
+**Execution Protocol**:
+1. **Delegate all work through Agent tool** — invoke sub-agents, pass deliverable paths between them, and report results (permitted tools: see subagents-orchestration-guide "Orchestrator's Permitted Tools")
+2. **Process one step at a time**: Execute steps sequentially within each unit (2 → 3 → 4 → 5). Each step's output is the required input for the next step. Complete all steps for one unit before starting the next
+3. **Pass `$STEP_N_OUTPUT` as-is** to sub-agents — the orchestrator bridges data without processing or filtering it
+
+**Execution Gate**: Complete Phase 1 before Phase 2. Within each phase, complete one unit's generation, verification, review, and required revision to convergence before starting the next unit. Advance only when the current step's stated output and quality gate are satisfied. At each loop boundary, select the first unit in the current phase's declared order whose Unit Completion conditions are unsatisfied and that is not logged as a generation failure. A document path proves generation only.
+
+## Step 0: Initial Configuration
+
+### 0.1 Scope Confirmation
+
+Use AskUserQuestion to confirm:
+1. **Target path**: Which directory/module to document
+2. **Depth**: PRD only, or PRD + Design Docs
+3. **Human review**: Yes (recommended) / No (fully autonomous)
+
+### 0.2 Output Configuration
+
+- PRD output: `docs/prd/` or existing PRD directory
+- Design Doc output: `docs/design/` or existing design directory
+- Verify directories exist, create if needed
+
+## Workflow Overview
+
+```
+Phase 1: PRD Generation
+  Step 1: Scope Discovery (unified, single pass → group into PRD units → human review)
+  Step 2-5: Per-unit loop (Generation → Verification → Review → Revision)
+
+Phase 2: Design Doc Generation (if requested)
+  Step 6: Design Doc Scope Mapping (reuse Step 1 results, no re-discovery)
+  Step 7-10: Per-unit loop (Generation → Verification → Review → Revision)
+  ※ Each unit produces one firmware Design Doc
+```
+
+## Phase 1: PRD Generation
+
+### Step 1: PRD Scope Discovery
+
+**Task invocation**:
+```
+subagent_type: scope-discoverer
+prompt: |
+  Discover functional scope targets in the codebase.
+
+  target_path: $USER_TARGET_PATH
+  reference_architecture: [only when the user's request names one; otherwise omit for bottom-up discovery]
+  focus_area: $USER_FOCUS_AREA (if specified)
+```
+
+**Store output as**: `$STEP_1_OUTPUT`
+
+**Quality Gate**:
+- At least one unit discovered → proceed
+- No units discovered → ask user for hints
+- `$STEP_1_OUTPUT.prdUnits` exists
+- All `sourceUnits` across `prdUnits` (flattened, deduplicated) match the set of `discoveredUnits` IDs — no unit missing, no unit duplicated
+- Each discovered unit's `unitInventory` has at least one non-empty category (routes, testFiles, or publicExports). Units with all three empty indicate incomplete discovery — re-run scope-discoverer with focus on that unit's relatedFiles
+
+**Human Review Point** (if enabled): Present `$STEP_1_OUTPUT.prdUnits` with their source unit mapping. The user confirms, adjusts grouping, or excludes units from scope. This is the most important review point — incorrect grouping cascades into all downstream documents.
+
+### Step 2-5: Per-Unit Processing
+
+**FOR** each unit in `$STEP_1_OUTPUT.prdUnits` **(sequential, one unit at a time):**
+
+#### Step 2: PRD Generation
+
+**Task invocation**:
+```
+subagent_type: prd-creator
+prompt: |
+  Create reverse-engineered PRD for the following feature.
+
+  Operation Mode: reverse-engineer
+  External Scope Provided: true
+
+  Feature: $PRD_UNIT_NAME (from $STEP_1_OUTPUT)
+  Description: $PRD_UNIT_DESCRIPTION
+  Related Files: $PRD_UNIT_COMBINED_RELATED_FILES
+  Entry Points: $PRD_UNIT_COMBINED_ENTRY_POINTS
+
+  Use provided scope as investigation starting point.
+  If tracing entry points reveals files outside this scope, include them.
+  Create final version PRD based on thorough code investigation.
+```
+
+**Store output as**: `$STEP_2_OUTPUT` (PRD path)
+
+#### Step 3: Code Verification
+
+Run this step in Normal Mode. Lite Mode proceeds to Step 4 without verifier evidence.
+
+**Prerequisite**: $STEP_2_OUTPUT (PRD path from Step 2)
+
+**Task invocation**:
+```
+subagent_type: code-verifier
+prompt: |
+  Verify consistency between PRD and code implementation.
+
+  doc_type: prd
+  document_path: $STEP_2_OUTPUT
+  unit_inventory: [the `unitInventory` of every discovered unit in the current PRD unit's `sourceUnits`, merged with duplicates removed]
+```
+
+Note: `code_paths` is intentionally NOT provided. The verifier discovers code scope from the document; `unit_inventory` serves only as the completeness baseline, so the search stays independent of scope-discoverer's file lists.
+
+Read `summary.status` before continuing: when it is `blocked`, the Input Gate failed and nothing was verified — stop and report `blockingReason` to the user rather than passing the result on, because its empty `discrepancies` would read downstream as a clean verification.
+
+**Store output as**: `$STEP_3_OUTPUT`
+
+Pass the complete verifier result to document review. Its discrepancies are evidence to resolve; numeric scoring and claim quotas are not used.
+
+#### Step 4: Review
+
+**Verification Input**: $STEP_3_OUTPUT only when Step 3 ran
+
+**Task invocation**:
+```
+subagent_type: document-reviewer
+prompt: |
+  Review the following PRD considering code verification findings.
+
+  doc_type: PRD
+  target: $STEP_2_OUTPUT
+  review_context: reverse-engineer
+  verification_evidence: $STEP_3_OUTPUT (only when Step 3 ran)
+```
+
+**Store output as**: `$STEP_4_OUTPUT`
+
+#### Step 5: Revision (conditional)
+
+Branch on `verdict.decision`. `pass` completes the unit. For `needs_revision`, apply Review Resolution, pass complete `apply` issue objects verbatim as `correction_findings` to `prd-creator` in update mode, then rerun Steps 3-4 with the same `unit_inventory` and `prior_feedback`. A decline-only result completes the review. For `rejected`, route through the Review Resolution Verdict Gate.
+
+#### Unit Completion
+
+- [ ] Review reached Review Resolution convergence (`pass`, or every remaining finding declined)
+- [ ] Human review passed (if enabled in Step 0)
+
+**Next**: Proceed to next unit. After all units → Phase 2.
+
+## Phase 2: Design Doc Generation
+
+*Execute only if Design Docs were requested in Step 0*
+
+### Step 6: Design Doc Scope Mapping
+
+**No additional discovery required.** Use `$STEP_1_OUTPUT.discoveredUnits` (implementation-granularity units) for technical profiles. Use `$STEP_1_OUTPUT.prdUnits[].sourceUnits` to trace which discovered units belong to each PRD unit.
+
+Each unit gets one Design Doc. Use the unit's `relatedFiles` and `technicalProfile.primaryModules` with the firmware layering in technical-spec skill (`src/`, `lib/`, `include/`, `test/`) to describe its boundaries.
+
+Map `$STEP_1_OUTPUT` units to Design Doc generation targets, carrying forward:
+- `technicalProfile.primaryModules` → Primary Files
+- `technicalProfile.publicInterfaces` → Public Interfaces
+- `dependencies` → Dependencies
+- `relatedFiles` → Scope boundary
+- `unitInventory` → Unit Inventory (routes, test files, public exports)
+
+**Store output as**: `$STEP_6_OUTPUT`
+
+### Step 7-10: Per-Unit Processing
+
+**FOR** each unit in `$STEP_6_OUTPUT.designDocTargets` **(sequential, one unit at a time):**
+
+#### Step 7: Design Doc Generation
+
+Generate Design Docs per unit based on `$STEP_6_OUTPUT` mapping.
+
+**7a.** Design Doc (technical-designer):
+
+**Task invocation**:
+```
+subagent_type: technical-designer
+prompt: |
+  Create Design Doc for the following feature based on existing code.
+
+  Operation Mode: reverse-engineer
+
+  Feature: $UNIT_NAME (from $STEP_6_OUTPUT)
+  Description: $UNIT_DESCRIPTION
+  Primary Files: $UNIT_PRIMARY_MODULES
+  Public Interfaces: $UNIT_PUBLIC_INTERFACES
+  Dependencies: $UNIT_DEPENDENCIES
+  Unit Inventory: $UNIT_INVENTORY (entry points, tasks/ISRs, test files, public headers from scope discovery)
+
+  Parent PRD: [this unit's reviewed PRD path from Phase 1]
+
+  Document current architecture as-is. Use Unit Inventory as a completeness baseline — all entry points, tasks, and public headers should be accounted for in the Design Doc. Record board environments, pins, and execution contexts (loop, tasks, ISRs) as observed.
+```
+
+**Store output as**: `$STEP_7_OUTPUT` (technical-designer result). When its `status` is `completed`, `$STEP_7_OUTPUT.path` is the Design Doc path; any other result is a generation failure.
+
+#### Step 8: Code Verification
+
+Run this step in Normal Mode. Lite Mode proceeds to Step 9 without verifier evidence.
+
+Verify each generated Design Doc separately.
+
+**Task invocation (per Design Doc)**:
+```
+subagent_type: code-verifier
+prompt: |
+  Verify consistency between Design Doc and code implementation.
+
+  doc_type: design-doc
+  document_path: $STEP_7_OUTPUT.path
+  unit_inventory: [the current Design Doc target's Step 6 unitInventory]
+```
+
+Note: `code_paths` is intentionally NOT provided. The verifier discovers code scope from the document; `unit_inventory` serves only as the completeness baseline.
+
+Read `summary.status` before continuing: when it is `blocked`, stop and report `blockingReason` for that Design Doc rather than passing the result to document-reviewer.
+
+**Store output as**: `$STEP_8_OUTPUT`
+
+#### Step 9: Review
+
+**Verification Input**: $STEP_8_OUTPUT only when Step 8 ran
+
+**Task invocation (per Design Doc)**:
+```
+subagent_type: document-reviewer
+prompt: |
+  Review the following Design Doc considering code verification findings.
+
+  doc_type: DesignDoc
+  review_context: reverse-engineer
+  target: $STEP_7_OUTPUT.path
+  verification_evidence: $STEP_8_OUTPUT (only when Step 8 ran)
+  confirmed_requirement_context: [this unit's reviewed PRD path from Phase 1]
+
+  ## Additional Review Focus
+  - Technical accuracy of documented interfaces
+  - Consistency with parent PRD scope
+  - Completeness of unit boundary definitions
+```
+
+**Store output as**: `$STEP_9_OUTPUT`
+
+#### Step 10: Revision (conditional)
+
+Branch on `verdict.decision`. `pass` completes the unit. For `needs_revision`, apply Review Resolution and pass complete `apply` issue objects verbatim as `correction_findings` to `technical-designer` in update mode, then rerun Steps 8-9 with the same `unit_inventory` and `prior_feedback`. A decline-only result completes the review. For `rejected`, route through the Review Resolution Verdict Gate.
+
+#### Unit Completion
+
+- [ ] Review reached Review Resolution convergence (`pass`, or every remaining finding declined)
+- [ ] Human review passed (if enabled in Step 0)
+
+**Next**: Proceed to next unit. After all units → Final Report.
+
+## Final Report
+
+Output summary including:
+- Generated documents table (Type, Name, Verification Status, Review Verdict)
+- Resolved, declined, and unresolved findings
+- Next steps checklist
+
+## Error Handling
+
+| Error | Action |
+|-------|--------|
+| Discovery finds nothing | Ask user for project structure hints |
+| Generation fails | Log failure, continue with other units, report in summary |
+| Verifier returns `blocked` | Stop and report `blockingReason` |
+| Reviewer returns `rejected` | Route through the Review Resolution Verdict Gate |

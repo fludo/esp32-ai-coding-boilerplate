@@ -1,0 +1,36 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# ESP-IDF generated config (commit sdkconfig.defaults*, not these)
+sdkconfig.*
+!sdkconfig.defaults*
+sdkconfig.old
+managed_components/
+
+# Secrets (commit include/secrets.example.h instead)
+include/secrets.h
+.env
+.env.*
+
+# IDE: keep PlatformIO's extension recommendation, ignore generated config
+.vscode/*
+!.vscode/extensions.json
+
+# Logs and temporary files
+*.log
+tmp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Work plans (local), plan templates are kept
+docs/plans/*
+!docs/plans/template-*.md
+docs/plans/tasks/
+
+# Python
+__pycache__/

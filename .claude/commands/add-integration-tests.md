@@ -1,0 +1,124 @@
+---
+description: Add integration/E2E tests to existing codebase using Design Docs
+---
+
+**Explicit User Instruction**: The user explicitly instructs and authorizes every subagent call named in this recipe. Execute each applicable call when its prerequisites are met.
+
+Execute the `llm-friendly-context` skill (using Skill tool) before writing Agent prompts, handoffs, or generated artifacts.
+Execute the `subagents-orchestration-guide` skill before making workflow decisions, invoking agents, or resolving findings.
+
+**Command Context**: Test addition workflow for existing implementations (firmware: host integration, on-target, system)
+
+## Orchestrator Definition
+
+**Core Identity**: "I am an orchestrator."
+
+**Execution Gate**: Complete Steps 1-7 in order for each generated layer. Advance only through the current step's stated output or response gate. Report completion after every layer completes review, quality assurance, commit, and the retained-limitation retry.
+
+**Execution Method**:
+- Skeleton generation → delegate to acceptance-test-generator
+- Test implementation → delegate to task-executor
+- Test review → delegate to integration-test-reviewer
+- Quality checks → delegate to quality-fixer
+
+Document paths: $ARGUMENTS
+
+## Prerequisites
+
+- At least one Design Doc must exist (created manually or via reverse-engineer)
+- Existing implementation to test
+
+## Execution Flow
+
+### Step 1: Discover and Validate Documents
+
+Resolve every explicit path in `$ARGUMENTS`, including moved or renamed paths. Then inspect repository documentation locations and metadata for related Design Docs. The conventional `docs/design/` location is a discovery hint rather than required layout.
+
+Classify discovered documents from their declared scope and content:
+- firmware modules, tasks, peripherals, connectivity, or persistence responsibilities → **Design Doc** (executor lane `backend`)
+
+Continue with documents explicitly named by the user and semantically related artifacts they reference. Ask for confirmation only when multiple plausible document sets would materially change the generated tests.
+
+Skeleton generation begins after Step 1 has resolved a readable Design Doc and identified its accepted behavior.
+
+### Step 2: Skeleton Generation
+
+Invoke acceptance-test-generator once per Design Doc:
+- `subagent_type`: "acceptance-test-generator"
+- `description`: "Generate test skeletons for [layer/name]"
+- `prompt`: "Generate test skeletons from Design Doc at [path]."
+
+**Expected output per invocation**: `generatedFiles[]` containing the emitted skeleton paths. An empty list means no additional integration/E2E proof is required for that Design Doc.
+
+When every result is empty, report that no additional integration/E2E proof artifact is required and finish.
+
+### Step 3: Test Implementation
+
+For each layer with generated skeletons, record the current `HEAD` as `diffBase`, then invoke its executor:
+- `subagent_type`: "task-executor"
+- `description`: "Implement integration tests"
+- `direct_scope`: Implement every test defined by the layer-specific generated skeletons
+- `governing_sources`: Layer-specific Design Doc and generated skeleton paths
+- `target_paths`: Generated test paths and existing setup or fixture paths identified from the repository
+- `observable_verification`: Execute the implemented tests and verify every skeleton claim at its declared boundary
+
+Execute one layer at a time through Steps 3→4→5→6→7 before starting the next.
+
+**Expected output**: `status`, `testsAdded`, `runnableCheck`
+
+Apply Specialist Result Acceptance after every executor invocation. Proceed to Step 4 when the response and repository state confirm at least one changed integration/E2E test file; continue implementation while an advancing action remains.
+
+### Step 4: Test Review
+
+Invoke integration-test-reviewer:
+- `subagent_type`: "integration-test-reviewer"
+- `description`: "Review test quality"
+- `testFile`: Confirmed changed integration/E2E test paths
+- `diffBase`: Revision recorded before Step 3
+- `designDocPath`: Layer-specific Design Doc
+- In the prompt, name the generated skeleton paths as the claims being reviewed when their annotations are not present in the changed test files
+
+**Expected output**: `status` (`pass`, `needs_revision`, or `blocked`), `qualityIssues[]`, and correction re-review `prior_feedback_reconciliation` when applicable
+
+### Step 5: Apply Review Fixes
+
+Check Step 4 result:
+- `pass` → Proceed to Step 6
+- `blocked` → Apply Specialist Result Acceptance
+- `needs_revision` → Apply Review Resolution, re-invoke the same layer executor with the original Step 3 scope plus the complete `apply` quality-issue objects as `correction_findings`, then return to Step 4 with `prior_feedback`
+
+### Step 6: Quality Check
+
+Invoke the current layer's quality-fixer:
+- `subagent_type`: "quality-fixer"
+- `description`: "Final quality assurance"
+- `direct_scope`: Reuse the Step 3 direct scope and affected paths
+- `runnableCheck`: The latest executor result's `runnableCheck`
+
+**Expected output**: `status` (`pass`, `stub_detected`, `verification_incomplete`, or `blocked`)
+
+Check the result:
+- `stub_detected` → Return to Step 3 with `incompleteImplementations` unchanged, then re-execute Steps 3→4→5→6
+- `blocked` → Apply Specialist Result Acceptance
+- `verification_incomplete` → Retain the complete result for the Specialist Result Acceptance retry and proceed to Step 7
+- `pass` → Proceed to Step 7
+
+### Step 7: Commit and Retained-Limitation Retry
+
+On `pass` or `verification_incomplete`, commit the completed test change using the repository's normal commit boundary and message convention.
+
+After every layer has a clean commit boundary, apply the proof-limitation retry in Specialist Result Acceptance with the same layer quality-fixer inputs. A `pass` result clears the retained proof limitation; route `stub_detected` through Steps 3→6, and retain a repeated `verification_incomplete` result for the completion report while continuing the workflow.
+
+In the completion report, list each repeated verification limitation and each declined actionable finding with its ID, governing reason, and evidence when any occurred.
+
+## Scope Boundary for Subagents
+
+Append the following block to every subagent prompt invoked from this recipe:
+
+```
+Scope boundary for subagents:
+Deliver the accepted test proof consistently across the repository responsibility that owns it.
+Treat referenced paths as investigation starting points and include supporting test-harness files when the same proof requires them.
+Keep governing artifacts read-only except for assigned progress fields.
+Return to Requirement Change Detection when confirmed outcome, desired-future requirements, and non-goals cannot all remain true; request authorization when an irreversible external action is required.
+```

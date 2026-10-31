@@ -1,0 +1,131 @@
+---
+description: Orchestrate the complete implementation lifecycle from requirements to deployment
+---
+
+**Explicit User Instruction**: The user explicitly instructs and authorizes every subagent call named in this recipe. Execute each applicable call when its prerequisites are met.
+
+Execute the `llm-friendly-context` skill (using Skill tool) before writing Agent prompts, handoffs, or generated artifacts.
+
+**Command Context**: Full-cycle implementation management (Requirements Analysis → Design → Planning → Implementation → Quality Assurance)
+
+Strictly adhere to subagents-orchestration-guide skill and operate as an orchestrator — delegate all work through Agent tool, pass data between sub-agents, and report results (permitted tools: see subagents-orchestration-guide "Orchestrator's Permitted Tools").
+
+## Execution Decision Flow
+
+### 1. Current Situation Assessment
+Instruction Content: $ARGUMENTS
+
+**Think deeply** Assess the current situation:
+
+| Situation Pattern | Decision Criteria | Next Action |
+|------------------|------------------|-------------|
+| New Requirements | No existing work, new feature/fix request | Start with requirement-analyzer |
+| Flow Continuation | Existing docs/tasks present, continuation directive | Identify next step in subagents-orchestration-guide skill flow |
+| Quality Errors | Error detection, test failures, build errors | Execute quality-fixer |
+| Ambiguous | Intent unclear, multiple interpretations possible | Confirm with user |
+
+### 2. Progress Verification for Continuation
+When continuing existing flow, verify:
+- Latest artifacts (PRD/ADR/Design Doc/Work Plan/Tasks)
+- Current phase position (Requirements/Design/Planning/Implementation/QA)
+- Identify next step in subagents-orchestration-guide skill corresponding flow
+
+### 3. Design Phase
+
+The firmware is a single implementation layer; follow the Single Firmware Layer section in subagents-orchestration-guide skill.
+
+### 4. After requirement-analyzer [Stop]
+
+Execute the `requirement-convergence` skill before running the hearing.
+
+Build the convergence record from the user's retained wording, using requirement-analyzer `scopeEvidence`, `costEvidence`, and `questions` as supporting facts, then run the requirement-convergence hearing. The orchestrator judges the convergence record and Structural Scale.
+
+When user responds to questions:
+- Record the answer in the convergence record and re-judge the affected field and Structural Scale
+- Re-execute requirement-analyzer only when the answer changes the analysis target or required scope evidence
+- Proceed when every applicable convergence field is `ready` or `weak-but-explicit`
+
+Carry the final `convergence` record into every document-creation step per the convergence-record handoff in subagents-orchestration-guide skill.
+
+### 5. Bind the Applicable Flow
+
+After Structural Scale is determined, follow only that scale's applicable path. Treat each applicable design, review, approval, planning, implementation, verification, cleanup, and reporting phase as a gate. Advance only when the current phase's stated evidence or approval exists; skip only branches whose stated condition is false.
+
+### 6. Execute Next Action
+
+Enter the flow at the phase this instruction requests and continue from there, following the "Flow Entry" section of subagents-orchestration-guide skill.
+
+## subagents-orchestration-guide skill Compliance Execution
+
+**Pre-execution Checklist (Required)**:
+- [ ] Confirmed relevant subagents-orchestration-guide skill flow
+- [ ] Identified current progress position
+- [ ] Clarified next step
+- [ ] Recognized stopping points → **Wait for explicit user confirmation at every Stop point**
+- [ ] codebase-analyzer included before each Design Doc creation
+- [ ] The selected mode's Design Doc verification calls and task quality boundary are applied
+
+**Flow Adherence**: Follow the applicable Structural Scale flow and selected mode's task cycle in subagents-orchestration-guide. Advance only when an applicable phase or cycle step satisfies its stated transition condition.
+
+## Scope Boundary for Subagents
+
+Append the following block to every subagent prompt invoked from this recipe:
+
+```
+Scope boundary for subagents:
+Deliver the task outcome consistently across the repository responsibility that owns it.
+Treat referenced paths as investigation starting points and include supporting files when the same outcome requires them.
+Keep governing artifacts read-only except for assigned progress fields.
+Return to Requirement Change Detection when confirmed outcome, desired-future requirements, and non-goals cannot all remain true; request authorization when an irreversible external action is required.
+```
+
+## Mandatory Orchestrator Responsibilities
+
+### Task Execution Quality Cycle
+Execute the following dependency-ordered steps. Normal Mode and Small run all four steps. Lite Mode with a Work Plan task set proceeds from accepted step-2 results to step 4 and runs the Final Quality Run after the last task:
+1. **INVOKE task-executor**: Execute implementation (cross-layer: see Layer-Aware Agent Routing). Medium/Large pass the task file. Small passes the approved outcome, governing sources, affected paths, and verification condition directly as the execution scope, since Small produces no task file.
+2. **CHECK task-executor response**:
+   - `status: "escalation_needed"` or `"blocked"` → Apply subagents-orchestration-guide Specialist Result Acceptance
+   - `requiresTestReview` is `true` → Execute **integration-test-reviewer**, passing the changed integration/E2E test paths and `diffBase: HEAD`. For Medium/Large also pass `taskFiles: [the current task file path]`; for Small pass the direct scope's verification claims instead. Then branch on its `status`
+     - `needs_revision` → Apply Review Resolution and return to step 1 with the original execution scope plus the complete `apply` quality-issue objects passed verbatim as `correction_findings`
+     - `blocked` → Resolve moved or renamed test paths from the current diff and re-run when the resolved input changes the review target. If no readable changed test exists despite `requiresTestReview: true`, return that executor-output defect to step 1 as `correction_findings`; otherwise record the review as not run with its `blockingReason` and proceed to the next applicable step
+     - `pass` → Proceed to the next applicable step
+   - Otherwise → Proceed to the next applicable step
+3. **INVOKE quality-fixer (Normal Mode or Small)**: Execute all quality checks and fixes against the complete current uncommitted worktree, including untracked, deleted, and renamed paths (cross-layer: see Layer-Aware Agent Routing). Medium/Large also pass the current `task_file`; Small passes the direct execution scope. Pass the implementation step's `runnableCheck` and `qualityCommand` when the governing source or repository convention names one.
+   - `stub_detected` → Return to step 1 and re-invoke task-executor with the original execution scope and `incompleteImplementations[]`
+   - `blocked` → Apply Specialist Result Acceptance
+   - `verification_incomplete` → Retain the complete result for final retry and proceed to step 4
+   - `pass` → Proceed to step 4
+4. **COMMIT**: Commit the completed task change set after its applicable mode's quality boundary
+
+### Post-Implementation Review (Medium/Large, After All Tasks Complete)
+
+For Lite Mode with a Work Plan task set, run the Final Quality Run before the document-dependent reviewers. Otherwise apply the proof-limitation retry in Specialist Result Acceptance. Continue after clearing or retaining each result and report only repeated limitations.
+
+Resolve the Work Plan's readable Design Doc; missing input blocks review.
+
+Invoke code-reviewer and, in Normal Mode, security-reviewer. When both apply, emit their calls in one assistant message and await both:
+- code-reviewer (subagent_type: "code-reviewer") → review the completed implementation with the resolved `governingDocuments`, the actual files changed by completed tasks as `implementationFiles`, and the Work Plan path
+- security-reviewer (subagent_type: "security-reviewer") → review the completed implementation against the same `governingDocuments` and `implementationFiles`
+
+Apply subagents-orchestration-guide's Post-Implementation Review status-routing and fix/re-run rules. Present the unified report; proceed to Final Cleanup after the complete review set reaches Review Resolution convergence.
+
+For Small, skip this document-dependent review. Retry a retained verification limitation once after the task commit; complete with observed `observable_verification` evidence and report any proof that remains unavailable. When that retry changes the repository, commit the change before the completion report, once the applicable quality-fixer has returned `pass` or `verification_incomplete` for it.
+
+### Final Cleanup
+
+For Medium/Large, before the completion report, commit any change that review corrections or the limitation retry left uncommitted after the last task commit, once the applicable quality-fixer has returned `pass` or `verification_incomplete` for it. Then delete the implementation task files this recipe consumed. Small creates no task files. The consumed task files are ephemeral working state and are not retained between recipe runs.
+
+This recipe is scale-agnostic and may execute single-layer or multi-layer plans, so cleanup must cover every task naming pattern task materialization can produce from the plan's executor lanes:
+
+- Delete every file matching ANY of these patterns for the `{plan-name}` derived from the work plan path used in this run:
+  - `docs/plans/tasks/{plan-name}-task-*.md` (single-layer tasks)
+  - `docs/plans/tasks/{plan-name}-backend-task-*.md` (backend portion of multi-layer plan)
+- Preserve the work plan itself (`docs/plans/{plan-name}.md`) — the user decides whether to delete it after final review
+
+If a filesystem error leaves task files behind, continue the completion report with that cleanup failure recorded.
+
+## Execution Method
+
+All work is executed through sub-agents.
+Sub-agent selection follows subagents-orchestration-guide skill.

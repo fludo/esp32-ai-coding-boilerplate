@@ -1,0 +1,88 @@
+# Security Check Patterns
+
+Last reviewed: 2026-09-23
+
+## Stable Patterns
+
+These patterns are reachable through direct source search, and their shape does not change with the ecosystem.
+
+### Hardcoded Secrets
+- Credentials, API keys, or tokens assigned as string literals in source code
+- Connection strings containing embedded passwords
+- Private keys or certificates stored in source files
+- Provider-specific token formats, recognizable by prefix rather than by variable name
+
+### SQL String Concatenation
+- SQL statements constructed through string concatenation or interpolation with variables instead of parameterized data access
+
+### Dynamic Code and Command Execution
+- `eval()`, `Function()`, `exec()`, or `compile()` reached by non-static input
+- Dynamic import or require with a variable path
+- Untrusted values flowing into a shell command string or its arguments
+
+### Insecure Deserialization
+- Deserializing untrusted input with `pickle.loads()`, `yaml.load()` without SafeLoader, or `marshal.loads()`
+- `JSON.parse()` output passed directly into `eval()` or `Function()`
+
+### Untrusted Resource Targets
+- File system paths constructed from user-supplied input without sanitization, including archive entry names and symlink targets
+- Outbound requests whose host, port, or scheme derives from user-supplied input, including a destination reached after a redirect (server-side request forgery)
+- In both directions, the caller selects a resource it cannot reach directly
+
+### Plaintext or Unverified Transport
+- Credentials, tokens, or personal data sent to a non-TLS destination constructed or configured in source
+- TLS certificate or hostname verification disabled in a client, agent, or transport configuration
+
+### Credentialed Cross-Origin Exposure
+- An attacker-controllable origin allowed to read an authenticated response, typically by reflecting the request `Origin` without an allowlist check while `Access-Control-Allow-Credentials` is enabled
+- A wildcard origin alone is not this pattern: browsers reject `*` for credentialed requests, and a reflected origin validated against an allowlist is the correct implementation
+
+## Trend-Sensitive Patterns
+
+Updated: 2026-09-23
+Sources: OWASP Top 10:2025; DryRun Agentic Coding Security Report (2026-03); Shai-Hulud npm worm campaigns (2025-09 onward)
+
+### Object-Level Authorization Gaps (OWASP A01:2025)
+- Route handlers and resource operations reachable without an authentication or authorization check in the call chain
+- Handlers that verify authentication but not the caller's right to the specific resource named in the request
+- Request identifiers used to select a record without scoping the query to the caller's tenant or ownership
+- Bulk, batch, export, and import operations whose authorization does not cover every target in the set
+- Request-body fields that override the resource, owner, role, or scope the permission check assumed
+- For the changed attack surface, verify each reachable resource access whose authorization behavior can change the security result
+
+### Mishandling of Exceptional Conditions (OWASP A10:2025)
+- Error handlers that expose internal system details (stack traces, database errors, file paths) in responses
+- Error handlers that grant access, skip authentication, or bypass authorization when an exception occurs
+- Missing error handling on security-critical operations (authentication, authorization, cryptographic operations)
+
+### Dependency and Pipeline Integrity (OWASP A03:2025)
+- Newly added dependencies that run install-time scripts (`preinstall`, `postinstall`, or the ecosystem equivalent)
+- Installation paths that resolve versions at install time instead of from the committed lockfile
+
+When the change includes pipeline definitions:
+- Third-party pipeline actions referenced by a mutable tag or branch rather than an immutable revision
+- Pipeline triggers that expose repository secrets or a writable token to code from an untrusted fork
+- Event-supplied values (titles, branch names, comment bodies) interpolated directly into pipeline shell steps
+
+## Embedded Firmware Patterns (ESP32)
+
+These apply to code under `src/`, `lib/`, `include/` and to `platformio.ini`.
+
+### Credentials and Device Identity
+- Wi-Fi SSID/password, MQTT/HTTP credentials, API tokens, or private keys as literals in source, headers that are tracked by git, or `build_flags` in `platformio.ini` (use a gitignored `include/secrets.h`, `${sysenv.*}`, or NVS provisioning)
+- Credentials, tokens, or keys printed via `Serial`, `ESP_LOG*`, or `log_*` at any level
+- Hard-coded default passwords for a SoftAP, web UI, or OTA endpoint that ship identical on every device
+
+### Transport
+- `WiFiClientSecure::setInsecure()`, `esp_http_client` / `esp_mqtt_client` configured without a CA certificate or `crt_bundle_attach`, or certificate verification disabled
+- Credentials sent over plain `WiFiClient`, `http://`, or `mqtt://` to a non-local destination
+
+### Update and Remote Control Surfaces
+- OTA (`ArduinoOTA`, `HTTPUpdate`, `esp_https_ota`, web upload) reachable without authentication, or accepting an image without TLS and (when required) signature verification
+- BLE characteristics or serial/MQTT commands that change configuration, actuate hardware, or trigger OTA/erase without pairing/authentication when the requirement calls for it
+- Debug or factory commands (erase NVS, dump config, reboot to download mode) left enabled in release builds
+
+### Memory Safety at Input Boundaries
+- Received network, BLE, UART, or sensor data copied into a fixed buffer without a length check (`strcpy`, `sprintf`, unchecked `memcpy`, `readBytes` into an undersized buffer)
+- Length or count fields from received frames used for allocation or indexing without an upper bound
+- Missing null-termination after `strncpy` / `readBytes` before string use

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host:
+    name: Format, static analysis, host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - name: Install PlatformIO and clang-format
+        run: pip install platformio clang-format
+      - name: Format
+        run: git ls-files 'src/*' 'lib/*' 'include/*' 'test/*' | grep -E '\.(c|cpp|h|hpp)$' | xargs clang-format --dry-run --Werror
+      - name: Host tests
+        run: pio test -e native
+
+  firmware:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [esp32dev, esp32-s3-devkitc-1, esp32-s2-saola-1, esp32-c3-devkitm-1, lolin_c3_mini, esp32-c6-devkitc-1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Static analysis
+        run: pio check -e ${{ matrix.env }} --skip-packages --fail-on-defect=medium --fail-on-defect=high
+      - name: Build firmware
+        run: pio run -e ${{ matrix.env }}
+      - name: Compile on-target tests
+        run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
