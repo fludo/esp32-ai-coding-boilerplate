@@ -3,9 +3,11 @@
 
     python3 scripts/new_project.py <target-dir> [--no-git]
 
-Copies the boilerplate without git history, build output, local plans or
-temporary files, records the boilerplate version in .esp32-ai-boilerplate.json,
-and initializes a git repository with an initial commit.
+Copies the boilerplate's own files (tracked, or untracked and not gitignored),
+so secrets, build output and local plans in this checkout never reach the new
+project. The project gets its own README, no LICENSE (that choice is yours),
+and a .esp32-ai-boilerplate.json recording the boilerplate version and the
+managed files that scripts/update_ai_setup.py can refresh later.
 """
 
 import argparse
@@ -16,32 +18,73 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-MANIFEST = ".esp32-ai-boilerplate.json"
-EXCLUDE_DIRS = {".git", ".pio", "tmp", "__pycache__"}
-EXCLUDE_FILES = {MANIFEST, "CHANGELOG.md"}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from update_ai_setup import MANIFEST, SOURCE as ROOT, boilerplate_files, digest, is_managed, source_info  # noqa: E402
+
+HOMEPAGE = "https://github.com/fludo/esp32-ai-coding-boilerplate"
+# Files that describe or operate the boilerplate itself, not a project made from it.
+BOILERPLATE_ONLY = {"README.md", "LICENSE", MANIFEST, "scripts/new_project.py", "scripts/update_ai_setup.py"}
+
+README = """# {name}
+
+ESP32 firmware built with PlatformIO and developed with Claude Code.
+
+## Commands
+
+| Goal | Command |
+|---|---|
+| Build / flash / monitor | `pio run -e <env>` · `pio run -e <env> -t upload` · `pio device monitor -e <env>` |
+| Host tests | `pio test -e native` |
+| On-target tests (board attached) | `pio test -e <env>` |
+| Quality gate | `scripts/check.sh` (`--quick`, `-e <env>`, `--fix`) |
+
+Secrets go in `include/secrets.h` (gitignored); copy `include/secrets.example.h`.
+
+## Working with Claude Code
+
+Run `/project-inject` once to record the device's purpose, boards and constraints, then start with
+`/implement` or `/task`. See the [Quick Start Guide](docs/guides/quickstart.md) and
+[Use Cases & Commands](docs/guides/use-cases.md).
+
+Created from [esp32-ai-coding-boilerplate]({homepage}) ({version}). To refresh the agents, skills and
+quality gate, pull a checkout of the boilerplate and run from it:
+
+```bash
+python3 scripts/update_ai_setup.py <this-project> --dry-run
+```
+"""
 
 
-def boilerplate_version() -> str:
+def write_notices(target: Path) -> None:
+    """Keeps the boilerplate's MIT notice in the project without making it the project's license."""
+    notices, license_file = target / "THIRD_PARTY_NOTICES.md", ROOT / "LICENSE"
+    if not (notices.exists() and license_file.exists()):
+        return
+    head, sep, rest = notices.read_text(encoding="utf-8").partition("\n## ")
+    section = (
+        "\n\n## esp32-ai-coding-boilerplate\n\n"
+        f"The project scaffold, `scripts/` and the ESP32 skills come from\n[esp32-ai-coding-boilerplate]({HOMEPAGE}), "
+        "under the following license:\n\n"
+        f"```\n{license_file.read_text(encoding='utf-8').strip()}\n```\n"
+    )
+    notices.write_text(head.rstrip() + section + sep + rest, encoding="utf-8")
+
+
+def init_git(target: Path) -> None:
+    def run(*args: str) -> None:
+        subprocess.run(["git", "-C", str(target), *args], check=True, capture_output=True, text=True)
+
+    run("init", "-q")
+    run("add", "-A")
     try:
-        return subprocess.run(
-            ["git", "-C", str(ROOT), "describe", "--tags", "--always", "--dirty"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-
-
-def ignore(directory: str, names: list) -> set:
-    rel = Path(directory).resolve().relative_to(ROOT)
-    ignored = {n for n in names if n in EXCLUDE_DIRS or (rel == Path(".") and n in EXCLUDE_FILES)}
-    # Work plans and task files are per-project; keep only plan templates.
-    if rel == Path("docs/plans"):
-        ignored |= {n for n in names if not n.startswith("template-")}
-    # Only the extension recommendation; the rest of .vscode is machine-specific.
-    if rel == Path(".vscode"):
-        ignored |= {n for n in names if n != "extensions.json"}
-    return ignored
+        run("commit", "-q", "-m", "Initial commit from esp32-ai-coding-boilerplate")
+    except subprocess.CalledProcessError as error:
+        print(
+            "warning: git repository initialized and files staged, but the initial commit failed:\n"
+            f"  {(error.stderr or error.stdout).strip()}\n"
+            "  Fix the cause (often a missing user.name / user.email) and commit yourself.",
+            file=sys.stderr,
+        )
 
 
 def main() -> int:
@@ -54,25 +97,30 @@ def main() -> int:
     if target.exists() and any(target.iterdir()):
         print(f"error: {target} exists and is not empty", file=sys.stderr)
         return 1
-    if ROOT in target.parents:
+    if target == ROOT or ROOT in target.parents:
         print("error: target must be outside the boilerplate", file=sys.stderr)
         return 1
 
-    shutil.copytree(ROOT, target, ignore=ignore, dirs_exist_ok=True)
+    files = [rel for rel in boilerplate_files() if rel.as_posix() not in BOILERPLATE_ONLY]
+    for rel in files:
+        dst = target / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / rel, dst)
+
+    info = source_info()
+    (target / "README.md").write_text(
+        README.format(name=target.name, homepage=HOMEPAGE, version=info["version"]), encoding="utf-8"
+    )
+    write_notices(target)
     manifest = {
-        "boilerplate": str(ROOT),
-        "version": boilerplate_version(),
+        **info,
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "managed": {rel.as_posix(): digest(ROOT / rel) for rel in files if is_managed(rel)},
     }
     (target / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     if not args.no_git:
-        subprocess.run(["git", "init", "-q", str(target)], check=True)
-        subprocess.run(["git", "-C", str(target), "add", "-A"], check=True)
-        subprocess.run(
-            ["git", "-C", str(target), "commit", "-q", "-m", "Initial commit from esp32-ai-coding-boilerplate"],
-            check=False,
-        )
+        init_git(target)
 
     print(f"Created {target}")
     print("Next: cd into it, edit platformio.ini (boards, default_envs), run scripts/check.sh --quick, then `claude` and /project-inject")

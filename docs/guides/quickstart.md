@@ -6,7 +6,8 @@ This guide takes a new ESP32 project from the boilerplate through initial setup 
 
 - PlatformIO Core (`pio`) — installed by the VS Code PlatformIO extension at `~/.platformio/penv/bin/pio`, or via `pipx install platformio`
 - Python 3.9+ (already present with PlatformIO), git, Claude Code
-- Optional: `clang-format` (format phase of `scripts/check.sh`), a board connected over USB for on-target tests
+- `clang-format` for the format phase of `scripts/check.sh` (`pipx install clang-format` or your package manager). Without it the gate fails unless you pass `--no-format`
+- Optional: a board connected over USB for on-target tests
 - WSL2: attach the board from Windows first (`usbipd list`, `usbipd attach --wsl --busid=<id>`)
 
 ## Create a project
@@ -16,10 +17,10 @@ From a clone of this boilerplate:
 ```bash
 python3 scripts/new_project.py ~/PlatformIO/Projects/my-sensor
 cd ~/PlatformIO/Projects/my-sensor
-scripts/check.sh --quick      # native tests + static analysis + default board build
+scripts/check.sh --quick      # format + static analysis + native tests + default board build + on-target test compile
 ```
 
-`new_project.py` copies the boilerplate without its git history, build output, or local plans, and initializes a new git repository. Alternatively, use the repository as a GitHub template.
+`new_project.py` copies the boilerplate's own files (nothing gitignored, so no secrets, build output or local plans), writes a project README, records the managed files for later updates, and initializes a new git repository. The project gets no LICENSE: choose your own. Alternatively, use the repository as a GitHub template.
 
 Then pick your boards: keep the `[env:...]` sections you use in `platformio.ini`, set `default_envs` to the board on your desk, and add boards from `.claude/skills/esp32-platform/references/boards.md` if needed.
 
