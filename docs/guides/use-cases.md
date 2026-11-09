@@ -115,7 +115,7 @@ File count is evidence about the change surface, not the scale rule.
 
 - Tests run host-first: `pio test -e native` for `lib/` logic, then on-target (`pio test -e <board>`) and system tests only where hardware or a live peer is the proof boundary. Skeletons are selected from accepted behavior and proof obligations. Existing tests count only when they exercise the same boundary and fail for the material failure being covered.
 - One scenario may prove several obligations when its assertions keep the failure mapping clear. Different setup or failure modes remain separate.
-- `quality-fixer` runs `scripts/check.sh` (clang-format, `pio check` with `--fail-on-defect`, native tests, builds for every board environment) plus task verification methods, fixes failures owned by the change, and records unavailable checks or unrelated baseline failures.
+- `quality-fixer` runs `scripts/check.sh` (clang-format, `pio check` with `--fail-on-defect`, native tests, builds and on-target test compilation for every board environment) plus task verification methods, fixes failures owned by the change, and records unavailable checks or unrelated baseline failures.
 - A quality result does not claim that an unavailable check passed — on-target tests without an attached board are reported as blocked. Build and review completion reports preserve that limitation.
 
 ## Artifact lifecycle

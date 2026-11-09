@@ -80,7 +80,7 @@ Before executing quality checks, identify the mechanisms covering the change are
 Quality checks are mandatory upon implementation completion. The authoritative command is **`scripts/check.sh`** (all board environments) — `scripts/check.sh --quick` or `-e <env>` narrows the build matrix during iteration, but the final gate for shared-code changes runs the full matrix.
 
 **Phase 1: Format**
-- `clang-format --dry-run --Werror` on changed C/C++ files (`scripts/check.sh --fix` applies it). When clang-format is not installed, record it as unavailable
+- `clang-format --dry-run --Werror` on changed C/C++ files (`scripts/check.sh --fix` applies it). When clang-format is not installed the gate fails: run `scripts/check.sh --no-format` and record the format check as unavailable
 
 **Phase 2: Static analysis**
 - `pio check -e <env> --skip-packages --fail-on-defect=medium --fail-on-defect=high` (cppcheck). Without `--fail-on-defect`, `pio check` reports PASSED even when defects are found — always pass it
@@ -92,7 +92,7 @@ Quality checks are mandatory upon implementation completion. The authoritative c
 
 **Phase 4: Tests**
 - `pio test -e native` — all host suites pass
-- On-target: `pio test -e <env>` when a board is attached and the change needs hardware evidence; otherwise compile the embedded suites and record on-target execution as blocked with the prerequisite ("board for `<env>` attached")
+- On-target: `pio test -e <env>` when a board is attached and the change needs hardware evidence; otherwise the compiled embedded suites (last phase of `scripts/check.sh`) are the only evidence: record on-target execution as blocked with the prerequisite ("board for `<env>` attached")
 
 **Transition evidence**: all host tests pass; on-target suites pass or are explicitly blocked with their prerequisite.
 

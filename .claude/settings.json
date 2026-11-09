@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/check.sh *)",
+      "Bash(pio run -e *)",
+      "Bash(pio check *)",
+      "Bash(pio test -e native *)",
+      "Bash(pio test -e * --without-uploading --without-testing)",
+      "Bash(pio boards *)",
+      "Bash(pio device list *)",
+      "Bash(pio pkg list *)",
+      "Bash(pio pkg search *)",
+      "Bash(pio pkg outdated *)"
+    ],
+    "ask": [
+      "Bash(*pio run * upload*)",
+      "Bash(*pio run *=upload*)",
+      "Bash(*pio run * erase*)",
+      "Bash(*pio run *=erase*)",
+      "Bash(pio pkg exec *)",
+      "Bash(esptool*)",
+      "Bash(*/esptool*)",
+      "Bash(python* -m esptool*)",
+      "Bash(espefuse*)",
+      "Bash(*/espefuse*)",
+      "Bash(python* -m espefuse*)"
+    ]
+  }
+}

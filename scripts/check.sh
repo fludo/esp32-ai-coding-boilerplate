@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Authoritative quality gate: format, static analysis, host tests, firmware builds.
+# Authoritative quality gate: format, static analysis, host tests, firmware
+# builds, on-target test compilation. CI runs this same script per board.
 #
-#   scripts/check.sh            # all phases, all board environments
-#   scripts/check.sh --quick    # all phases, default environment only
-#   scripts/check.sh -e <env>   # all phases, one board environment (repeatable)
-#   scripts/check.sh --fix      # apply clang-format instead of only checking it
+#   scripts/check.sh              # all phases, all board environments
+#   scripts/check.sh --quick      # all phases, default environment only
+#   scripts/check.sh -e <env>     # all phases, one board environment (repeatable)
+#   scripts/check.sh --fix        # apply clang-format instead of only checking it
+#   scripts/check.sh --no-format  # skip the format phase (clang-format unavailable)
 #
-# Exits non-zero on the first failing phase. On-target tests are not run here:
-# they need a board (pio test -e <env>).
+# Exits non-zero on the first failing phase. On-target tests are compiled but
+# not run here: running them needs a board (pio test -e <env>).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -24,12 +26,14 @@ fi
 ENVS=()
 QUICK=0
 FIX=0
+FORMAT=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --quick) QUICK=1 ;;
     --fix) FIX=1 ;;
+    --no-format) FORMAT=0 ;;
     -e) shift; ENVS+=("$1") ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -52,30 +56,45 @@ if [ -z "$SOURCES" ]; then
   SOURCES=$(find src lib include test -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) 2>/dev/null)
 fi
 
-phase "1/4 format (clang-format)"
-if command -v clang-format >/dev/null 2>&1; then
-  if [ $FIX -eq 1 ]; then
-    echo "$SOURCES" | xargs clang-format -i
-    echo "formatted"
-  else
-    echo "$SOURCES" | xargs clang-format --dry-run --Werror
-    echo "ok"
-  fi
+phase "1/5 format (clang-format)"
+if [ $FORMAT -eq 0 ]; then
+  echo "skipped: --no-format"
+elif ! command -v clang-format >/dev/null 2>&1; then
+  echo "error: clang-format not found; install it (pipx install clang-format, or your package manager)" >&2
+  echo "       or pass --no-format to skip this phase explicitly" >&2
+  exit 127
+elif [ $FIX -eq 1 ]; then
+  echo "$SOURCES" | xargs clang-format -i
+  echo "formatted"
 else
-  echo "skipped: clang-format not installed"
+  echo "$SOURCES" | xargs clang-format --dry-run --Werror
+  echo "ok"
 fi
 
-phase "2/4 static analysis (pio check)"
+phase "2/5 static analysis (pio check)"
 for env in "${ENVS[@]}"; do
   "$PIO" check -e "$env" --skip-packages --fail-on-defect=medium --fail-on-defect=high
 done
 
-phase "3/4 host tests (pio test -e native)"
+phase "3/5 host tests (pio test -e native)"
 "$PIO" test -e native
 
-phase "4/4 firmware build (pio run)"
+phase "4/5 firmware build (pio run)"
 for env in "${ENVS[@]}"; do
   "$PIO" run -e "$env"
 done
 
-printf '\nAll checks passed for: %s\n' "${ENVS[*]}"
+phase "5/5 on-target test compile (pio test --without-uploading --without-testing)"
+if compgen -G 'test/embedded/*/' >/dev/null; then
+  for env in "${ENVS[@]}"; do
+    "$PIO" test -e "$env" --without-uploading --without-testing
+  done
+else
+  echo "skipped: no suites under test/embedded/"
+fi
+
+if [ $FORMAT -eq 0 ]; then
+  printf '\nChecks passed for: %s (format phase skipped)\n' "${ENVS[*]}"
+else
+  printf '\nAll checks passed for: %s\n' "${ENVS[*]}"
+fi
